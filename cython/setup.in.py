@@ -8,6 +8,7 @@ try:
 except ImportError:
     from distutils.core import setup
     from distutils.extension import Extension
+import sysconfig
 
 from Cython.Build import cythonize
 
@@ -157,9 +158,29 @@ def GenExtension(name):
     )
 
 
+# Prefix compiler with ccache and its options if specified in cmake
+cython_c_compiler_launcher = "@CYTHON_C_COMPILER_LAUNCHER@"
+if cython_c_compiler_launcher:
+    sysconfig.get_config_vars()["CC"] = (
+        cython_c_compiler_launcher
+        + " "
+        + sysconfig.get_config_vars()["BINDIR"]
+        + "/"
+        + sysconfig.get_config_vars()["CC"]
+    )
+cython_cxx_compiler_launcher = "@CYTHON_CXX_COMPILER_LAUNCHER@"
+if cython_cxx_compiler_launcher:
+    sysconfig.get_config_vars()["CXX"] = (
+        cython_cxx_compiler_launcher
+        + " "
+        + sysconfig.get_config_vars()["BINDIR"]
+        + "/"
+        + sysconfig.get_config_vars()["CXX"]
+    )
+
 extensions = [GenExtension(x) for x in "@CYTHON_BINDINGS_MODULES@".split(";")]
 
-extensions = cythonize(extensions)
+extensions = cythonize(extensions, cache=True)
 
 packages = [p.split(".")[0] for p in "@CYTHON_BINDINGS_MODULES@".split(";")]
 package_data = {
