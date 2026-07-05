@@ -14,82 +14,25 @@
 # this program.  If not, see <http://www.gnu.org/licenses/>.
 
 option(PYTHON_BINDING "Generate Python binding" ON)
-if(WIN32)
-  set(PYTHON_BINDING_USER_INSTALL_DEFAULT ON)
-else()
-  set(PYTHON_BINDING_USER_INSTALL_DEFAULT OFF)
-endif()
-option(
-  PYTHON_BINDING_USER_INSTALL
-  "Install the Python binding in user space"
-  ${PYTHON_BINDING_USER_INSTALL_DEFAULT}
-)
-option(PYTHON_BINDING_FORCE_PYTHON2 "Use python2 instead of python" OFF)
-option(PYTHON_BINDING_FORCE_PYTHON3 "Use python3 instead of python" OFF)
-set(PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3_DEFAULT OFF)
-if(DEFINED PYTHON_DEB_ROOT)
-  set(PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3_DEFAULT ON)
-endif()
-option(
-  PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3
-  "Build Python 2 and Python 3 bindings"
-  ${PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3_DEFAULT}
-)
-if(${PYTHON_BINDING_FORCE_PYTHON2} AND ${PYTHON_BINDING_FORCE_PYTHON3})
-  message(FATAL_ERROR "Cannot enforce Python 2 and Python 3 at the same time")
-endif()
 set(CYTHON_SETUP_IN_PY_LOCATION "${CMAKE_CURRENT_LIST_DIR}/setup.in.py")
 set(CYTHON_DUMMY_CPP_LOCATION "${CMAKE_CURRENT_LIST_DIR}/dummy.cpp")
 set(PYTHON_EXTRA_CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/python")
 
 # Find the Python packages required depending on binding options
 macro(_setup_python_for_cython)
-  # FindPython(2|3).cmake only exists from CMake 3.12
+  # FindPython3.cmake only exists from CMake 3.12
   if(${CMAKE_VERSION} VERSION_LESS "3.12.0")
     list(APPEND CMAKE_MODULE_PATH ${PYTHON_EXTRA_CMAKE_MODULE_PATH})
   endif()
-  set(PYTHON_BINDING_VERSIONS)
+  set(PYTHON_VERSION Python3)
   if(PYTHON_BINDING)
-    if(PYTHON_BINDING_FORCE_PYTHON2 OR PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3)
-      list(APPEND PYTHON_BINDING_VERSIONS Python2)
-    endif()
-    if(PYTHON_BINDING_FORCE_PYTHON3 OR PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3)
-      list(APPEND PYTHON_BINDING_VERSIONS Python3)
-    endif()
-    list(LENGTH PYTHON_BINDING_VERSIONS N_PYTHON_BINDING_VERSIONS)
-    if(N_PYTHON_BINDING_VERSIONS EQUAL 0)
-      list(APPEND PYTHON_BINDING_VERSIONS Python)
-      # Recent CMake always favor Python 3 but we really want the system's
-      # default Python in that case
-      if(NOT DEFINED Python_EXECUTABLE)
-        find_program(DEFAULT_PYTHON_EXECUTABLE python)
-        if(DEFAULT_PYTHON_EXECUTABLE)
-          set(Python_EXECUTABLE ${DEFAULT_PYTHON_EXECUTABLE})
-        endif()
+    list(APPEND PYTHON_BINDING_VERSIONS Python3)
+    if(NOT DEFINED Python3_EXECUTABLE)
+      find_program(DEFAULT_PYTHON3_EXECUTABLE python3)
+      if(DEFAULT_PYTHON3_EXECUTABLE)
+        set(Python3_EXECUTABLE ${DEFAULT_PYTHON3_EXECUTABLE})
       endif()
     endif()
-    foreach(PYTHON_VERSION ${PYTHON_BINDING_VERSIONS})
-      # CMake favors the most recent version it can find on the system but we
-      # really mean to pick the default "python3" if availble
-      if(PYTHON_VERSION STREQUAL "Python3" AND NOT DEFINED Python3_EXECUTABLE)
-        find_program(DEFAULT_PYTHON3_EXECUTABLE python3)
-        if(DEFAULT_PYTHON3_EXECUTABLE)
-          set(Python3_EXECUTABLE ${DEFAULT_PYTHON3_EXECUTABLE})
-        endif()
-      endif()
-      # Same for python2
-      if(PYTHON_VERSION STREQUAL "Python2" AND NOT DEFINED Python2_EXECUTABLE)
-        find_program(DEFAULT_PYTHON2_EXECUTABLE python2)
-        if(DEFAULT_PYTHON2_EXECUTABLE)
-          set(Python2_EXECUTABLE ${DEFAULT_PYTHON2_EXECUTABLE})
-        endif()
-      endif()
-      find_package(
-        ${PYTHON_VERSION}
-        REQUIRED
-        COMPONENTS Interpreter Development NumPy
-      )
-    endforeach()
   endif()
 endmacro()
 
@@ -125,21 +68,6 @@ endmacro()
 macro(_is_static_library TARGET OUT)
   get_target_property(target_type ${TARGET} TYPE)
   if(${target_type} STREQUAL "STATIC_LIBRARY")
-    set(${OUT} True)
-  else()
-    set(${OUT} False)
-  endif()
-endmacro()
-
-# Check if pip install supports --system
-macro(_pip_has_install_system PYTHON OUT)
-  execute_process(
-    COMMAND ${PYTHON} -m pip install --system
-    RESULT_VARIABLE ${OUT}
-    OUTPUT_QUIET
-    ERROR_QUIET
-  )
-  if(${${OUT}} EQUAL 0)
     set(${OUT} True)
   else()
     set(${OUT} False)
@@ -281,28 +209,7 @@ macro(
       COMMENT "Install ${PACKAGE} ${PYTHON} bindings (Debian layout)"
     )
   else()
-    set(PIP_EXTRA_OPTIONS "")
-    if(${PYTHON_BINDING_USER_INSTALL})
-      set(PIP_EXTRA_OPTIONS "--user")
-    endif()
-    if(DEFINED PIP_INSTALL_PREFIX)
-      _pip_has_install_system(${PYTHON} PIP_HAS_INSTALL_SYSTEM)
-      execute_process(
-        COMMAND
-          ${PYTHON} -c
-          "import sys; print(\"python{}.{}\".format(sys.version_info.major, sys.version_info.minor));"
-        OUTPUT_VARIABLE PYTHON_VERSION
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-      )
-      set(
-        PIP_TARGET
-        "${PIP_INSTALL_PREFIX}/lib/${PYTHON_VERSION}/site-packages/"
-      )
-      set(PIP_EXTRA_OPTIONS --target "${PIP_TARGET}")
-      if(${PIP_HAS_INSTALL_SYSTEM})
-        set(PIP_EXTRA_OPTIONS --system ${PIP_EXTRA_OPTIONS})
-      endif()
-    endif()
+    set(PIP_EXTRA_OPTIONS "--no-system-install")
     add_custom_target(
       install-${TARGET_NAME}
       COMMAND
@@ -489,51 +396,14 @@ macro(ADD_CYTHON_BINDINGS PACKAGE)
       "${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE}/configured/${F}"
     )
   endforeach()
-  if(${PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3})
-    _ADD_CYTHON_BINDINGS_TARGETS(
-      "python2"
-      ${PACKAGE}
-      "${CYTHON_BINDINGS_SOURCES}"
-      "${CYTHON_BINDINGS_GENERATE_SOURCES}"
-      "${CYTHON_BINDINGS_TARGETS}"
-      ${WITH_TESTS}
-    )
-    _ADD_CYTHON_BINDINGS_TARGETS(
-      "python3"
-      ${PACKAGE}
-      "${CYTHON_BINDINGS_SOURCES}"
-      "${CYTHON_BINDINGS_GENERATE_SOURCES}"
-      "${CYTHON_BINDINGS_TARGETS}"
-      ${WITH_TESTS}
-    )
-  elseif(${PYTHON_BINDING_FORCE_PYTHON3})
-    _ADD_CYTHON_BINDINGS_TARGETS(
-      "python3"
-      ${PACKAGE}
-      "${CYTHON_BINDINGS_SOURCES}"
-      "${CYTHON_BINDINGS_GENERATE_SOURCES}"
-      "${CYTHON_BINDINGS_TARGETS}"
-      ${WITH_TESTS}
-    )
-  elseif(${PYTHON_BINDING_FORCE_PYTHON2})
-    _ADD_CYTHON_BINDINGS_TARGETS(
-      "python2"
-      ${PACKAGE}
-      "${CYTHON_BINDINGS_SOURCES}"
-      "${CYTHON_BINDINGS_GENERATE_SOURCES}"
-      "${CYTHON_BINDINGS_TARGETS}"
-      ${WITH_TESTS}
-    )
-  else()
-    _ADD_CYTHON_BINDINGS_TARGETS(
-      "python"
-      ${PACKAGE}
-      "${CYTHON_BINDINGS_SOURCES}"
-      "${CYTHON_BINDINGS_GENERATE_SOURCES}"
-      "${CYTHON_BINDINGS_TARGETS}"
-      ${WITH_TESTS}
-    )
-  endif()
+  _ADD_CYTHON_BINDINGS_TARGETS(
+    "python3"
+    ${PACKAGE}
+    "${CYTHON_BINDINGS_SOURCES}"
+    "${CYTHON_BINDINGS_GENERATE_SOURCES}"
+    "${CYTHON_BINDINGS_TARGETS}"
+    ${WITH_TESTS}
+  )
 endmacro()
 
 # In this macro PYTHON is the module we should search and PYTHON_B is the name
@@ -589,28 +459,7 @@ macro(GET_CYTHON_LIBRARIES PACKAGE VAR)
     list(APPEND CMAKE_MODULE_PATH ${PYTHON_EXTRA_CMAKE_MODULE_PATH})
   endif()
   set(${VAR})
-  if(${PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3})
-    _APPEND_CYTHON_LIBRARY(${PACKAGE} Python2 python2 ${VAR})
-    _APPEND_CYTHON_LIBRARY(${PACKAGE} Python3 python3 ${VAR})
-  elseif(${PYTHON_BINDING_FORCE_PYTHON2})
-    _APPEND_CYTHON_LIBRARY(${PACKAGE} Python2 python2 ${VAR})
-  elseif(${PYTHON_BINDING_FORCE_PYTHON3})
-    _APPEND_CYTHON_LIBRARY(${PACKAGE} Python3 python3 ${VAR})
-  else()
-    execute_process(
-      COMMAND python -c "import sys; print(sys.version_info.major);"
-      OUTPUT_VARIABLE PYTHON_MAJOR
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if("${PYTHON_MAJOR}" STREQUAL "2" OR "${PYTHON_MAJOR}" STREQUAL "3")
-      _APPEND_CYTHON_LIBRARY(${PACKAGE} Python${PYTHON_MAJOR} python ${VAR})
-    else()
-      message(
-        FATAL_ERROR
-        "Could not determine Python major version from command line, got ${PYTHON_MAJOR}, expected 2 or 3"
-      )
-    endif()
-  endif()
+  _APPEND_CYTHON_LIBRARY(${PACKAGE} Python3 python3 ${VAR})
 endmacro()
 
 # .rst: .. command:: GET_PYTHON_NAMES(VAR)
@@ -620,16 +469,7 @@ endmacro()
 #
 macro(GET_PYTHON_NAMES VAR)
   set(${VAR})
-  if(${PYTHON_BINDING_BUILD_PYTHON2_AND_PYTHON3})
-    list(APPEND ${VAR} Python2)
-    list(APPEND ${VAR} Python3)
-  elseif(${PYTHON_BINDING_FORCE_PYTHON2})
-    list(APPEND ${VAR} Python2)
-  elseif(${PYTHON_BINDING_FORCE_PYTHON3})
-    list(APPEND ${VAR} Python3)
-  else()
-    list(APPEND ${VAR} Python)
-  endif()
+  list(APPEND ${VAR} Python3)
 endmacro()
 
 # .rst: .. command:: MAKE_CYTHON_BINDINGS(PACKAGE TARGETS targets... [VERSION
